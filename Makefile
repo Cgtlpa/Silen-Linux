@@ -1,10 +1,5 @@
 .PHONY: iso qemu clean
 
-# Silen Linux - build tools
-#
-#   make iso     build the bootable ISO
-#   make qemu    boot the ISO in QEMU (UEFI)
-#   make clean   remove the build/ folder
 
 iso:
 	sudo nice -n 10 ionice -c 3 ./scripts/build.sh
