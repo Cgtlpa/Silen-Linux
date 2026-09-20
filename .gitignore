@@ -1,0 +1,7 @@
+build/
+spk/target/
+.idea/
+*.iml
+
+tarball-silen.xz
+rootfs/lib/modules/*/updates/dkms/nvidia.ko.zst
