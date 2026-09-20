@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-trap 'echo; "!! Build stopped with an error See the message above"; "   Remove build/ if needed rm -rf build" >&2' ERR
+trap 'echo; echo "!! Build stopped with an error See the message above"; echo "   Remove build/ if needed rm -rf build" >&2' ERR
 DEFAULT_KVER="$(ls rootfs/lib/modules 2>/dev/null | grep '^[0-9]' | head -n1)"
 KERNEL_VERSION="${KERNEL_VERSION:-${DEFAULT_KVER:-7.2.4-zen2-1-zen}}"
 KERNEL_SOURCE="${KERNEL_SOURCE:-boot/vmlinuz}"
@@ -414,7 +414,7 @@ done
 if [ -f /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service ]; then
 	mkdir -p "$RAMROOT/usr/share/dbus-1/system-services"
 	cp /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service \
-		echo "$RAMROOT/usr/share/dbus-1/system-services/"
+		"$RAMROOT/usr/share/dbus-1/system-services/"
 fi
 sed -e '/<user>.*<\/user>/d' -e '/<fork\/>/d' /usr/share/dbus-1/system.conf > "$RAMROOT/usr/share/dbus-1/system.conf"
 
