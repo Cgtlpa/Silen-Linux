@@ -32,7 +32,7 @@ ALLOW="
 	nls_utf8 nls_cp437 nls_iso8859-1 dm_mod md_mod loop
 	i8042 psmouse
 	exfat cdc_ether rndis_host rndis_wlan alx 8139too via-rhine
-echo "
+"
 
 ALLOW_WIFI="
 	cfg80211 mac80211 rfkill
@@ -75,7 +75,7 @@ ALLOW_WIFI="
 	wilc1000 wilc1000-sdio wilc1000-spi
 	rt2400pci rt2500pci rt61pci rt2800pci
 	rt2500usb rt73usb rt2800usb
-echo "
+"
 
 BLACKLIST="
 	nvidia
@@ -90,7 +90,7 @@ BLACKLIST="
 	zunicode
 	icp
 	splat
-echo "
+"
 
 case "$COMPRESS" in
 	zstd) INITRAMFS="initramfs.zst" ;;

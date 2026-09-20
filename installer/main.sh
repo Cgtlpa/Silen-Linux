@@ -234,7 +234,7 @@ trap cleanup EXIT
     exit 1
 }
 
-whiptail --msgbox --title "$title" "Silen linux installer errors may occur" 10 40
+whiptail --msgbox --title "$title" "Silen linux installer errors may occur" 10 40 || true
 
 
 connect_internet() {

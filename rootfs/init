@@ -18,7 +18,7 @@ done
 qecho() { [ -n "$QUIET" ] || echo "$@"; }
 
 if [ -f /etc/modules ]; then
-	echo "qecho Loading kernel modules"
+	echo "Loading kernel modules"
 	while read -r mod; do
 		[ -n "$mod" ] && modprobe -q "$mod"
 	done < /etc/modules
@@ -48,7 +48,7 @@ if [ -n "$rootarg" ]; then
 		sleep 1
 	done
 	if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
-		echo "qecho Silen mounting root $rootarg $rootdev"
+		echo "Silen mounting root $rootarg $rootdev"
 		mkdir -p /newroot
 		if mount -o ro "$rootdev" /newroot 2>/dev/null || mount "$rootdev" /newroot 2>/dev/null; then
 			mkdir -p /newroot/proc /newroot/sys /newroot/dev /newroot/run
@@ -56,7 +56,7 @@ if [ -n "$rootarg" ]; then
 			mount --move /sys /newroot/sys 2>/dev/null
 			mount --move /dev /newroot/dev 2>/dev/null
 			mount --move /run /newroot/run 2>/dev/null
-			echo "qecho Silen switching to $newroot/sbin/init"
+			echo "Silen switching to $newroot/sbin/init"
 			if [ -n "$QUIET" ]; then
 				clear >/dev/console 2>&1 || printf '\033[H\033[2J' >/dev/console 2>&1 || true
 			fi
