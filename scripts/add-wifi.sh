@@ -63,13 +63,13 @@ WIFI_MODS="
 	rt2400pci rt2500pci rt61pci rt2800pci
 	rt2500usb rt73usb rt2800usb
 	cfg80211 mac80211
-echo "
+"
 
 EXTRA_MODS="
 	exfat
 	cdc_ether rndis_host rndis_wlan
 	alx 8139too via-rhine
-echo "
+"
 
 EXTRA_FW="
 	iwlwifi:iwlwifi-*.ucode*
@@ -98,7 +98,7 @@ EXTRA_FW="
 	wlcore:ti-connectivity/*
 	ar5523:ar5523.bin*
 	wilc1000:atmel/*
-echo "
+"
 
 
 declare -A file_by_name

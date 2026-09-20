@@ -644,7 +644,7 @@ elif [ -x /sbin/depmod ]; then
 else
 	DEPMOD=depmod
 fi
-$DEPMOD -b "$RAMROOT" "$KERNEL_VERSION" || "  ! depmod failed modules dep may be missing"
+$DEPMOD -b "$RAMROOT" "$KERNEL_VERSION" || echo "  ! depmod failed modules dep may be missing"
 
 
 echo "[6/7] Packing initramfs ($COMPRESS)"
@@ -699,8 +699,8 @@ if modules_ok "$MODULES_SOURCE"; then
 	cp "$KERNEL_SOURCE" "$KROOT/boot/vmlinuz"
 	cp -a "$MODULES_SOURCE" "$KROOT/lib/modules/$KERNEL_VERSION"
 	rm -rf "$KROOT/lib/modules/$KERNEL_VERSION/build" \
-	       echo "$KROOT/lib/modules/$KERNEL_VERSION/source" \
-	       echo "$KROOT/lib/modules/$KERNEL_VERSION/vmlinuz"
+	       "$KROOT/lib/modules/$KERNEL_VERSION/source" \
+	       "$KROOT/lib/modules/$KERNEL_VERSION/vmlinuz"
 	find "$KROOT/lib/modules" -name '*.ko' -exec strip --strip-debug {} +
 	KERNEL_TAR="$ISO_DIR/kernel-$KERNEL_VERSION.tar.zst"
 	tar -C "$KROOT" --exclude='./lib/modules/*/build' --exclude='./lib/modules/*/source' \
