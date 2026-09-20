@@ -18,7 +18,7 @@ done
 qecho() { [ -n "$QUIET" ] || echo "$@"; }
 
 if [ -f /etc/modules ]; then
-	"qecho Loading kernel modules"
+	echo "qecho Loading kernel modules"
 	while read -r mod; do
 		[ -n "$mod" ] && modprobe -q "$mod"
 	done < /etc/modules
@@ -48,7 +48,7 @@ if [ -n "$rootarg" ]; then
 		sleep 1
 	done
 	if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
-		"qecho Silen mounting root $rootarg $rootdev"
+		echo "qecho Silen mounting root $rootarg $rootdev"
 		mkdir -p /newroot
 		if mount -o ro "$rootdev" /newroot 2>/dev/null || mount "$rootdev" /newroot 2>/dev/null; then
 			mkdir -p /newroot/proc /newroot/sys /newroot/dev /newroot/run
@@ -56,7 +56,7 @@ if [ -n "$rootarg" ]; then
 			mount --move /sys /newroot/sys 2>/dev/null
 			mount --move /dev /newroot/dev 2>/dev/null
 			mount --move /run /newroot/run 2>/dev/null
-			"qecho Silen switching to $newroot/sbin/init"
+			echo "qecho Silen switching to $newroot/sbin/init"
 			if [ -n "$QUIET" ]; then
 				clear >/dev/console 2>&1 || printf '\033[H\033[2J' >/dev/console 2>&1 || true
 			fi
@@ -76,7 +76,7 @@ mountpoint -q /dev  || mount -t devtmpfs devtmpfs /dev 2>/dev/null
 mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts 2>/dev/null
 mountpoint -q /run  || mount -t tmpfs tmpfs /run 2>/dev/null
 
-"Welcome to Silen Linux"
+echo "Welcome to Silen Linux"
 
 ip link set lo up 2>/dev/null || true
 mkdir -p /run/dbus /run/NetworkManager /run/wpa_supplicant /run/user /var/lib/NetworkManager
@@ -86,16 +86,16 @@ if command -v rfkill >/dev/null 2>&1; then
 fi
 ip link set lo up 2>/dev/null || true
 
-"Starting D-Bus"
+echo "Starting D-Bus"
 dbus-daemon --system --nofork >/dev/null 2>&1 &
 sleep 1
-"Starting NetworkManager"
+echo "Starting NetworkManager"
 NetworkManager --no-daemon >/tmp/NetworkManager.log 2>&1 &
 (sleep 5; rfkill unblock all >/dev/null 2>&1 || true; nmcli radio wifi on >/dev/null 2>&1 || true; nmcli networking on >/dev/null 2>&1 || true) &
 (sleep 12; [ -x /usr/bin/silen-wifi-check ] && /usr/bin/silen-wifi-check /tmp/silen-wifi.log >/dev/null 2>&1 || true) &
 
 echo
-"Mounting install medium"
+echo "Mounting install medium"
 
 medium_has_tarball_at() {
 	_dir="$1"
@@ -238,7 +238,7 @@ try_isos_on_scan() {
 			fi
 			stage3="$(find_tarball_at /mnt 2>/dev/null)" || stage3=""
 			[ -n "$stage3" ] || stage3="/mnt/$(basename "$(find_tarball_at /iso 2>/dev/null)" 2>/dev/null)"
-			"  install medium is an ISO file on $_srcdev $_iso"
+			echo "  install medium is an ISO file on $_srcdev $_iso"
 			echo "$_srcdev" > /run/silen-medium-dev 2>/dev/null || true
 			echo "$_iso" > /run/silen-medium-iso 2>/dev/null || true
 			return 0
@@ -303,21 +303,21 @@ umount /run/scan 2>/dev/null
 umount /iso 2>/dev/null || true
 
 if [ -n "$stage3" ]; then
-	"  install medium mounted at /mnt"
-	"  found Silen tarball $stage3"
+	echo "  install medium mounted at /mnt"
+	echo "  found Silen tarball $stage3"
 else
-	"  no Silen tarball found on any device"
-	"  debug block devices seen $seen_devices"
-	"  debug devices that mounted $mounted_devices"
-	"  debug ISO files seen $seen_isos"
+	echo "  no Silen tarball found on any device"
+	echo "  debug block devices seen $seen_devices"
+	echo "  debug devices that mounted $mounted_devices"
+	echo "  debug ISO files seen $seen_isos"
 	if [ -n "$iso_hint" ]; then
-		"  debug iso hint from cmdline $iso_hint"
+		echo "  debug iso hint from cmdline $iso_hint"
 	fi
-	"  hint Ventoy boots the ISO as a FILE if you used Ventoy"
-	"  hint this scan loop-mounts silen-*.iso automatically If it"
-	"  hint still fails the Ventoy partition may use an unsupported"
-	"  hint filesystem or the ISO name was changed Most reliable is"
-	"  hint writing the ISO with dd see installer shell mount blkid"
+	echo "  hint Ventoy boots the ISO as a FILE if you used Ventoy"
+	echo "  hint this scan loop-mounts silen-*.iso automatically If it"
+	echo "  hint still fails the Ventoy partition may use an unsupported"
+	echo "  hint filesystem or the ISO name was changed Most reliable is"
+	echo "  hint writing the ISO with dd see installer shell mount blkid"
 	if medium_has_tarball; then
 		:
 	elif mountpoint -q /mnt 2>/dev/null; then
@@ -329,14 +329,14 @@ fi
 
 echo
 if [ -x /installer/main.sh ]; then
-	"Starting the Silen installer"
-	"  it also lets you open a shell reboot or power off"
+	echo "Starting the Silen installer"
+	echo "  it also lets you open a shell reboot or power off"
 	echo
 	/installer/main.sh
 	echo
-	"Installer exited dropping to a shell"
+	echo "Installer exited dropping to a shell"
 else
-	"  installer not found dropping to a shell"
+	echo "  installer not found dropping to a shell"
 fi
 mkdir -p /etc 2>/dev/null || true
 if touch /etc/silen-shrc 2>/dev/null; then
@@ -348,14 +348,14 @@ EOF
 export ENV=/etc/silen-shrc
 fi
 echo
-"Silen Linux live shell type exit to power off reboot to reboot"
+echo "Silen Linux live shell type exit to power off reboot to reboot"
 echo
 while true; do
 	/bin/sh
 	echo
-	"Shell exited powering off"
+	echo "Shell exited powering off"
 	sync 2>/dev/null || true
 	poweroff -f 2>/dev/null || reboot -f 2>/dev/null || true
-	"Power off failed starting a new shell"
+	echo "Power off failed starting a new shell"
 	sleep 1
 done

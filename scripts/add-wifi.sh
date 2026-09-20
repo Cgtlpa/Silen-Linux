@@ -19,7 +19,7 @@ if [ ! -d "$HOST" ]; then
     exit 1
 fi
 
-"== Syncing modules from $HOST to $DST"
+echo "== Syncing modules from $HOST to $DST"
 
 WIFI_MODS="
 	rfkill
@@ -63,13 +63,13 @@ WIFI_MODS="
 	rt2400pci rt2500pci rt61pci rt2800pci
 	rt2500usb rt73usb rt2800usb
 	cfg80211 mac80211
-"
+echo "
 
 EXTRA_MODS="
 	exfat
 	cdc_ether rndis_host rndis_wlan
 	alx 8139too via-rhine
-"
+echo "
 
 EXTRA_FW="
 	iwlwifi:iwlwifi-*.ucode*
@@ -98,7 +98,7 @@ EXTRA_FW="
 	wlcore:ti-connectivity/*
 	ar5523:ar5523.bin*
 	wilc1000:atmel/*
-"
+echo "
 
 
 declare -A file_by_name
@@ -144,7 +144,7 @@ while [ ${#queue[@]} -gt 0 ]; do
     mkdir -p "$DST/$(dirname "$relative")"
     if [ ! -f "$DST/$relative" ]; then
         cp "$path" "$DST/$relative"
-        "  module $relative"
+        echo "  module $relative"
     fi
     copied="$copied $path "
 
@@ -169,7 +169,7 @@ fw_copy_from_src() {
     mkdir -p "$(dirname "$target")"
     if [ ! -f "$target" ]; then
         cp "$src" "$target"
-        "  firmware $rel"
+        echo "  firmware $rel"
     fi
 }
 
@@ -184,7 +184,7 @@ copy_fw() {
             if [ ! -d "$FW_DST/$rel" ]; then
                 mkdir -p "$FW_DST/$(dirname "$rel")"
                 cp -a "$f" "$FW_DST/$rel"
-                "  firmware $rel/"
+                echo "  firmware $rel/"
             fi
         else
             fw_copy_from_src "$f" "$rel"
@@ -206,17 +206,17 @@ copy_fw_zst() {
     [ "$matched" = 1 ] || return 0
 }
 
-"  copying firmware"
+echo "  copying firmware"
 while IFS= read -r path; do
     fw_from_module "$path"
 done < <(printf '%s\n' $copied)
 
-"  copying firmware for all shipped modules"
+echo "  copying firmware for all shipped modules"
 while IFS= read -r path; do
     fw_from_module "$path"
 done < <(find "$DST" \( -name '*.ko' -o -name '*.ko.zst' \))
 
-"  copying extra firmware"
+echo "  copying extra firmware"
 while IFS=':' read -r mod fwlist; do
     mod="${mod//[[:space:]]/}"
     [ -n "$mod" ] && [ -n "$fwlist" ] || continue
@@ -238,9 +238,9 @@ for meta in modules.builtin modules.builtin.alias.bin modules.builtin.bin \
     [ -f "$HOST/$meta" ] && cp "$HOST/$meta" "$DST/$meta" 2>/dev/null || true
 done
 
-"  regenerating modules dep and modules alias"
+echo "  regenerating modules dep and modules alias"
 depmod -b rootfs "$KVER" 2>/dev/null || true
 
 echo
-"Done now make sure the same driver names are on the ALLOW list in"
-"scripts/build.sh so the live initramfs gets them too"
+echo "Done now make sure the same driver names are on the ALLOW list in"
+echo "scripts/build.sh so the live initramfs gets them too"

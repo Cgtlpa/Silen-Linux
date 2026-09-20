@@ -32,7 +32,7 @@ ALLOW="
 	nls_utf8 nls_cp437 nls_iso8859-1 dm_mod md_mod loop
 	i8042 psmouse
 	exfat cdc_ether rndis_host rndis_wlan alx 8139too via-rhine
-"
+echo "
 
 ALLOW_WIFI="
 	cfg80211 mac80211 rfkill
@@ -75,7 +75,7 @@ ALLOW_WIFI="
 	wilc1000 wilc1000-sdio wilc1000-spi
 	rt2400pci rt2500pci rt61pci rt2800pci
 	rt2500usb rt73usb rt2800usb
-"
+echo "
 
 BLACKLIST="
 	nvidia
@@ -90,7 +90,7 @@ BLACKLIST="
 	zunicode
 	icp
 	splat
-"
+echo "
 
 case "$COMPRESS" in
 	zstd) INITRAMFS="initramfs.zst" ;;
@@ -414,7 +414,7 @@ done
 if [ -f /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service ]; then
 	mkdir -p "$RAMROOT/usr/share/dbus-1/system-services"
 	cp /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service \
-		"$RAMROOT/usr/share/dbus-1/system-services/"
+		echo "$RAMROOT/usr/share/dbus-1/system-services/"
 fi
 sed -e '/<user>.*<\/user>/d' -e '/<fork\/>/d' /usr/share/dbus-1/system.conf > "$RAMROOT/usr/share/dbus-1/system.conf"
 
@@ -651,19 +651,19 @@ echo "[6/7] Packing initramfs ($COMPRESS)"
 
 AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
 if [ -n "$AVAIL_MB" ] && [ "$AVAIL_MB" -gt 0 ] && [ "$AVAIL_MB" -lt "$MIN_RAM_MB" ] && [ "$FORCE" != "1" ]; then
-	"  ERROR only ${AVAIL_MB}MB RAM available need ${MIN_RAM_MB}MB at compression time"
-	"  Rerun with FORCE=1 to try anyway"
+	echo "  ERROR only ${AVAIL_MB}MB RAM available need ${MIN_RAM_MB}MB at compression time"
+	echo "  Rerun with FORCE=1 to try anyway"
 	exit 1
 fi
 
 for cmd in cpio; do
 	if ! command -v "$cmd" >/dev/null 2>&1; then
-		"  ERROR $cmd not found install it e.g. sudo pacman -S $cmd"
+		echo "  ERROR $cmd not found install it e.g. sudo pacman -S $cmd"
 		exit 1
 	fi
 done
 if ! command -v "$COMPRESS" >/dev/null 2>&1; then
-	"  ERROR $COMPRESS not found install it e.g. sudo pacman -S $COMPRESS"
+	echo "  ERROR $COMPRESS not found install it e.g. sudo pacman -S $COMPRESS"
 	exit 1
 fi
 
@@ -692,59 +692,59 @@ echo "[7/7] Assembling ISO"
 mkdir -p "$ISO_DIR/boot/grub"
 
 if modules_ok "$MODULES_SOURCE"; then
-	"  packing kernel + module tree for the installed system"
+	echo "  packing kernel + module tree for the installed system"
 	KROOT="build/kernel-root"
 	rm -rf "$KROOT"
 	mkdir -p "$KROOT/boot" "$KROOT/lib/modules"
 	cp "$KERNEL_SOURCE" "$KROOT/boot/vmlinuz"
 	cp -a "$MODULES_SOURCE" "$KROOT/lib/modules/$KERNEL_VERSION"
 	rm -rf "$KROOT/lib/modules/$KERNEL_VERSION/build" \
-	       "$KROOT/lib/modules/$KERNEL_VERSION/source" \
-	       "$KROOT/lib/modules/$KERNEL_VERSION/vmlinuz"
+	       echo "$KROOT/lib/modules/$KERNEL_VERSION/source" \
+	       echo "$KROOT/lib/modules/$KERNEL_VERSION/vmlinuz"
 	find "$KROOT/lib/modules" -name '*.ko' -exec strip --strip-debug {} +
 	KERNEL_TAR="$ISO_DIR/kernel-$KERNEL_VERSION.tar.zst"
 	tar -C "$KROOT" --exclude='./lib/modules/*/build' --exclude='./lib/modules/*/source' \
 		--exclude='./lib/modules/*/vmlinuz' -I 'zstd -19' -cf "$KERNEL_TAR" .
 	echo "  kernel bundle: $(du -h "$KERNEL_TAR" | cut -f1)"
 else
-	"  no module tree found to add to ISO installed system gets the initramfs set"
+	echo "  no module tree found to add to ISO installed system gets the initramfs set"
 fi
 
 if [ -d rootfs/lib/firmware ]; then
-	"  adding firmware to ISO at firmware"
+	echo "  adding firmware to ISO at firmware"
 	cp -a rootfs/lib/firmware "$ISO_DIR/firmware"
 fi
 
 STAGE3_TARBALL="$(ls stage3-*.tar.* tarball-*.xz tarball-*.tar.* 2>/dev/null | head -n1)"
 if [ -n "$STAGE3_TARBALL" ]; then
-	"  copying stage3 tarball onto the ISO $STAGE3_TARBALL"
+	echo "  copying stage3 tarball onto the ISO $STAGE3_TARBALL"
 	cp "$STAGE3_TARBALL" "$ISO_DIR/"
 else
 	echo
-	"  !! WARNING no stage3/tarball found in the repo root"
-	"  !! The ISO will boot but the installer will refuse to install"
-	"  !! no Silen tarball found Put tarball-silen.xz or a"
-	"  !! stage3-*.tar.*) next to this repo before building"
+	echo "  !! WARNING no stage3/tarball found in the repo root"
+	echo "  !! The ISO will boot but the installer will refuse to install"
+	echo "  !! no Silen tarball found Put tarball-silen.xz or a"
+	echo "  !! stage3-*.tar.*) next to this repo before building"
 	echo
 fi
 
 if command -v cargo >/dev/null 2>&1; then
-	"  building spk spk/src/get.rs"
+	echo "  building spk spk/src/get.rs"
 	CARGO_ENV=()
 	if [ -n "$SUDO_USER" ]; then
 		CARGO_ENV+=(RUSTUP_HOME=/home/$SUDO_USER/.rustup CARGO_HOME=/home/$SUDO_USER/.cargo)
 	fi
 	if env "${CARGO_ENV[@]}" cargo build --release --manifest-path spk/Cargo.toml; then
-		"  copying spk onto the ISO"
+		echo "  copying spk onto the ISO"
 		cp spk/target/release/spk "$ISO_DIR/spk"
 	else
-		"  ! spk build failed installer will try to fetch it another way"
+		echo "  ! spk build failed installer will try to fetch it another way"
 	fi
 else
-	"  ! cargo not found skipping spk build installer will try to fetch it"
+	echo "  ! cargo not found skipping spk build installer will try to fetch it"
 fi
 
-"  packing network bundle NetworkManager/nmtui + deps for the installed system"
+echo "  packing network bundle NetworkManager/nmtui + deps for the installed system"
 NETROOT="build/network-root"
 rm -rf "$NETROOT"
 mkdir -p "$NETROOT"
@@ -773,22 +773,22 @@ done
 if [ -d "$NETROOT/usr/bin" ]; then
 	NETWORK_TAR="$ISO_DIR/network.tar.zst"
 	tar -C "$NETROOT" -I 'zstd -19' -cf "$NETWORK_TAR" .
-	"  network bundle $(du -h "$NETWORK_TAR" | cut -f1)"
+	echo "  network bundle $(du -h "$NETWORK_TAR" | cut -f1)"
 else
-	"  ! network stack missing from ramroot installed system gets no NetworkManager"
+	echo "  ! network stack missing from ramroot installed system gets no NetworkManager"
 fi
 
 if [ -d grub-bundle/usr/local ]; then
-	"  adding bundled grub EFI to ISO at grub"
+	echo "  adding bundled grub EFI to ISO at grub"
 	mkdir -p "$ISO_DIR/grub"
 	cp -a grub-bundle/usr "$ISO_DIR/grub/"
 else
 	echo "  ! no grub-bundle/ found - installer won't be able to set up GRUB"
-	"    build it once with scripts/make-grub-bundle.sh"
+	echo "    build it once with scripts/make-grub-bundle.sh"
 fi
 
 if [ -f branding/fastfetch_logo.txt ]; then
-	"  adding branding to ISO at branding"
+	echo "  adding branding to ISO at branding"
 	mkdir -p "$ISO_DIR/branding"
 	cp branding/fastfetch_logo.txt "$ISO_DIR/branding/"
 	[ -f branding/info.txt ] && cp branding/info.txt "$ISO_DIR/branding/"
@@ -823,17 +823,17 @@ menuentry "Silen Linux" {
 }
 EOF
 
-"  running grub-mkrescue"
+echo "  running grub-mkrescue"
 grub-mkrescue -o "$RESULT" "$ISO_DIR"
 
 echo
-"Done"
+echo "Done"
 du -sh "$RESULT"
 echo
-"initramfs  $(du -h "build/$INITRAMFS" | cut -f1)"
-"kernel     $(du -h "$KERNEL_SOURCE" | cut -f1)"
-"modules    $(du -sh "$MODULES_DIR" | cut -f1)"
-"firmware   $(du -sh "$RAMROOT/lib/firmware" 2>/dev/null | cut -f1)"
+echo "initramfs  $(du -h "build/$INITRAMFS" | cut -f1)"
+echo "kernel     $(du -h "$KERNEL_SOURCE" | cut -f1)"
+echo "modules    $(du -sh "$MODULES_DIR" | cut -f1)"
+echo "firmware   $(du -sh "$RAMROOT/lib/firmware" 2>/dev/null | cut -f1)"
 
 if [ -n "${SUDO_USER:-}" ]; then
 	chown -R "$SUDO_USER" build 2>/dev/null || true
