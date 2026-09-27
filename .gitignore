@@ -4,4 +4,19 @@ spk/target/
 *.iml
 
 tarball-silen.xz
+*.tar.xz
+*.iso
+*.img
+*.bak
+*.orig
 rootfs/lib/modules/*/updates/dkms/nvidia.ko.zst
+
+# Build outputs / binaries — never commit these (keep repo small).
+# They are generated locally by scripts/build.sh, not source.
+boot/
+grub-bundle/
+rootfs/bin/
+rootfs/lib/modules/
+rootfs/lib/firmware/
+*.ko
+*.ko.zst

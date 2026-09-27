@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
+set -E
+set -o pipefail
 
-trap 'echo; echo "!! Build stopped with an error See the message above"; echo "   Remove build/ if needed rm -rf build" >&2' ERR
+trap 'rc=$?; echo; echo "!! Build stopped with an error (exit $rc at line $LINENO: $BASH_COMMAND) See the message above"; echo "   Remove build/ if needed: sudo rm -rf build" >&2' ERR
 DEFAULT_KVER=""
 for _kv in rootfs/lib/modules/[0-9]*; do
 	[ -d "$_kv" ] || continue
@@ -25,7 +27,7 @@ AUTO_HOST="${AUTO_HOST:-0}"
 FULL="${FULL:-0}"             
 FORCE="${FORCE:-0}"            
 MIN_RAM_MB="${MIN_RAM_MB:-2048}"
-MIN_DISK_MB="${MIN_DISK_MB:-500}"             
+MIN_DISK_MB="${MIN_DISK_MB:-2048}"
 
 ALLOW="
 	ahci libahci ata_piix sd_mod sr_mod cdrom nvme nvme_core nvme_auth nvme_common vmd
@@ -82,6 +84,15 @@ ALLOW_WIFI="
 	rt2500usb rt73usb rt2800usb
 "
 
+# VIDEO — deliberately NO GPU/KMS modules in the live initramfs.
+# Silen is TUI/CLI-first (whiptail installer, console): display is handled
+# by simpledrm/efifb, which are BUILTIN to the kernel (see modules.builtin)
+# — no .ko, no firmware, no extra megabytes, and nothing that can
+# black-screen the installer. GPU drivers (amdgpu/i915/xe/radeon/nouveau)
+# reach the installed system through the kernel bundle + /firmware dir on
+# the ISO instead, where udev loads the right one after switch_root.
+# (An earlier attempt shipped them here: nouveau alone dragged 519
+# nvidia/* blobs that exploded to ~1.3G and the ISO stopped booting.)
 BLACKLIST="
 	nvidia
 	nvidia_drm
@@ -109,13 +120,15 @@ echo "compression $COMPRESS   auto-detect host modules $AUTO_HOST   full module 
 echo
 
 modules_ok() {
-	[ -d "$1" ] && find "$1" \( -name '*.ko' -o -name '*.ko.zst' \) 2>/dev/null | grep -q .
+	[ -d "$1" ] || return 1
+	# -print -quit stops after the first match so no SIGPIPE under pipefail.
+	[ -n "$(find "$1" \( -name '*.ko' -o -name '*.ko.zst' \) -print -quit 2>/dev/null)" ]
 }
 
 if ! modules_ok "$MODULES_SOURCE"; then
 	echo "  kernel module tree not found $MODULES_SOURCE"
 	echo "  auto-detecting host kernel instead"
-	HOST_VER="$(uname -r 2>/dev/null)"
+	HOST_VER="$(uname -r 2>/dev/null || true)"
 	HOST_MODS="/usr/lib/modules/$HOST_VER"
 	if [ -n "$HOST_VER" ] && modules_ok "$HOST_MODS"; then
 		echo "  using host kernel $HOST_VER"
@@ -150,7 +163,7 @@ if ! command -v grub-mkrescue >/dev/null 2>&1; then
 	exit 1
 fi
 
-AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || true)"
 if [ -n "$AVAIL_MB" ] && [ "$AVAIL_MB" -gt 0 ] && [ "$AVAIL_MB" -lt "$MIN_RAM_MB" ] && [ "$FORCE" != "1" ]; then
 	echo "  ERROR only ${AVAIL_MB}MB RAM available need ${MIN_RAM_MB}MB"
 	echo "  Close heavy apps first or rerun with FORCE=1 to try anyway"
@@ -258,12 +271,12 @@ while [ ${#queue[@]} -gt 0 ]; do
 
 	is_blacklisted "$name" && continue
 
-	path="$(module_file "$name")"
+	path="$(module_file "$name" || true)"
 	[ -z "$path" ] && continue
 
 	chosen+=("$name")
 
-	deps="$(modinfo -F depends "$path" 2>/dev/null)"
+	deps="$(modinfo -F depends "$path" 2>/dev/null || true)"
 	for dep in ${deps//,/ }; do
 		[ -n "$dep" ] && queue+=("$dep")
 	done
@@ -290,23 +303,26 @@ mkdir -p "$RAMROOT/lib/modules"
 
 cp "$BUSYBOX_SOURCE" "$RAMROOT/bin/busybox"
 
-for _ld in /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 /usr/lib/ld-linux-x86-64.so.2; do
+for _ld in /lib64/ld-linux-x86-64.so.2 /usr/lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 /usr/lib/ld-linux-x86-64.so.2; do
 	[ -f "$_ld" ] || continue
 	cp --dereference "$_ld" "$RAMROOT/lib64/ld-linux-x86-64.so.2" 2>/dev/null && break
 done
-for _clib in /usr/lib64/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6 /usr/lib/libc.so.6; do
+for _clib in /usr/lib/libc.so.6 /usr/lib64/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6; do
 	[ -f "$_clib" ] || continue
 	cp --dereference "$_clib" "$RAMROOT/usr/lib64/libc.so.6" 2>/dev/null && break
 done
-for _mlib in /usr/lib64/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6 /usr/lib/libm.so.6; do
+for _mlib in /usr/lib/libm.so.6 /usr/lib64/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6; do
 	[ -f "$_mlib" ] || continue
 	cp --dereference "$_mlib" "$RAMROOT/usr/lib64/libm.so.6" 2>/dev/null && break
 done
-for _rlib in /usr/lib64/libresolv.so.2 /lib/x86_64-linux-gnu/libresolv.so.2 /usr/lib/libresolv.so.2; do
+for _rlib in /usr/lib/libresolv.so.2 /usr/lib64/libresolv.so.2 /lib/x86_64-linux-gnu/libresolv.so.2; do
 	[ -f "$_rlib" ] || continue
 	cp --dereference "$_rlib" "$RAMROOT/usr/lib64/libresolv.so.2" 2>/dev/null && break
 done
 [ -f "$RAMROOT/lib64/ld-linux-x86-64.so.2" ] || { echo "  ERROR dynamic loader not found install it first"; exit 1; }
+[ -f "$RAMROOT/usr/lib64/libc.so.6" ] || { echo "  ERROR libc.so.6 copy failed install it first"; exit 1; }
+[ -f "$RAMROOT/usr/lib64/libm.so.6" ] || echo "  ! libm.so.6 not copied some tools may fail"
+[ -f "$RAMROOT/usr/lib64/libresolv.so.2" ] || echo "  ! libresolv.so.2 not copied DNS may fail in live env"
 
 cat > "$RAMROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -337,15 +353,34 @@ copy_libs() {
 	local bin="$1" lib
 	[ -f "$bin" ] || return 0
 	mkdir -p "$RAMROOT/usr/lib64"
+	# Warn once if ldd reports missing libs (e.g. "libfoo.so => not found").
+	if ldd "$bin" 2>/dev/null | grep -q '=> not found'; then
+		echo "  ! $bin has missing libs:"
+		ldd "$bin" 2>/dev/null | grep '=> not found' | sed 's/^/    /' || true
+	fi
 	while IFS= read -r lib; do
+		# Strip any leading/trailing whitespace (ldd indents with tabs).
+		lib="$(printf '%s' "$lib" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 		[ -n "$lib" ] || continue
+		# Skip the virtual vdso (no file on disk) and any non-absolute entry.
+		case "$lib" in
+			/*) ;;
+			*) continue ;;
+		esac
+		case "$lib" in
+			*linux-vdso*|*linux-gate*) continue ;;
+		esac
 		case " $libs_seen " in
 			*" $lib "*) continue ;;
 		esac
 		libs_seen="$libs_seen $lib "
-		cp --dereference "$lib" "$RAMROOT/usr/lib64/" 2>/dev/null || echo "  ! cannot copy lib $lib"
+		if [ ! -e "$lib" ]; then
+			echo "  ! missing lib $lib (needed by $bin)"
+			continue
+		fi
+		cp --dereference "$lib" "$RAMROOT/usr/lib64/" 2>/dev/null || echo "  ! cannot copy lib $lib (needed by $bin)"
 		copy_libs "$lib"
-	done < <({ ldd "$bin" 2>/dev/null | sed -n 's/.*=> \(\/[^ ]*\).*/\1/p'; ldd "$bin" 2>/dev/null | grep -o '^[[:space:]]*/[^ ]*' | tr -d ' '; } | sort -u)
+	done < <(ldd "$bin" 2>/dev/null | grep -o '/[^ ()]*' | sort -u || true)
 
 }
 
@@ -356,16 +391,16 @@ copy_app() {
 		echo "  ERROR required tool missing: $src (install it first)"
 		exit 1
 	fi
-	mkdir -p "$RAMROOT/usr/bin"
-	cp --dereference "$src" "$RAMROOT/usr/bin/$dest"
+	mkdir -p "$RAMROOT/usr/bin" || { echo "  ERROR cannot create $RAMROOT/usr/bin"; exit 1; }
+	cp --dereference "$src" "$RAMROOT/usr/bin/$dest" || { echo "  ERROR cannot copy $src (disk full?)"; exit 1; }
 	copy_libs "$src"
 }
 copy_opt() {
 	local dest="$1"
 	local src="$2"
 	[ -e "$src" ] || return 0
-	mkdir -p "$RAMROOT/usr/bin"
-	cp --dereference "$src" "$RAMROOT/usr/bin/$dest"
+	mkdir -p "$RAMROOT/usr/bin" || { echo "  ERROR cannot create $RAMROOT/usr/bin"; exit 1; }
+	cp --dereference "$src" "$RAMROOT/usr/bin/$dest" || { echo "  ! cannot copy optional $src"; return 0; }
 	copy_libs "$src"
 }
 
@@ -412,6 +447,12 @@ if [ -f /etc/ca-certificates/extracted/tls-ca-bundle.pem ]; then
 	cp /etc/ca-certificates/extracted/tls-ca-bundle.pem "$RAMROOT/etc/ssl/certs/ca-certificates.crt"
 elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
 	cp /etc/ssl/certs/ca-certificates.crt "$RAMROOT/etc/ssl/certs/ca-certificates.crt"
+elif [ -f /etc/ssl/ca-bundle.pem ]; then
+	cp /etc/ssl/ca-bundle.pem "$RAMROOT/etc/ssl/certs/ca-certificates.crt"
+elif [ -f /var/lib/ca-certificates/ca-bundle.pem ]; then
+	cp /var/lib/ca-certificates/ca-bundle.pem "$RAMROOT/etc/ssl/certs/ca-certificates.crt"
+elif [ -f /etc/pki/tls/certs/ca-bundle.crt ]; then
+	cp /etc/pki/tls/certs/ca-bundle.crt "$RAMROOT/etc/ssl/certs/ca-certificates.crt"
 else
 	echo "  ! no CA bundle found https may fail in live env"
 fi
@@ -420,14 +461,18 @@ fi
 copy_app NetworkManager /usr/sbin/NetworkManager
 copy_app dbus-daemon  /usr/bin/dbus-daemon
 copy_app wpa_supplicant /usr/sbin/wpa_supplicant
-mkdir -p "$RAMROOT/usr/sbin"
+mkdir -p "$RAMROOT/usr/sbin" || { echo "  ERROR cannot create $RAMROOT/usr/bin"; exit 1; }
 ln -sf /usr/bin/wpa_supplicant "$RAMROOT/usr/sbin/wpa_supplicant"
-[ -f /usr/bin/wpa_cli ] && copy_app wpa_cli /usr/bin/wpa_cli
-[ -f /usr/bin/rfkill ] && copy_app rfkill /usr/bin/rfkill
-[ -f /usr/bin/iw ] && copy_app iw /usr/bin/iw
-[ -f /usr/sbin/rfkill ] && { copy_app rfkill /usr/sbin/rfkill; ln -sf /usr/bin/rfkill "$RAMROOT/usr/sbin/rfkill" 2>/dev/null || true; }
-[ -f /usr/sbin/iw ] && { copy_app iw /usr/sbin/iw; ln -sf /usr/bin/iw "$RAMROOT/usr/sbin/iw" 2>/dev/null || true; }
-for _dbus_helper in /usr/lib/dbus-daemon-launch-helper /usr/libexec/dbus-daemon-launch-helper; do
+# sbin tools live in /usr/bin in the ramroot; keep absolute /usr/sbin/* working too.
+for _sbin_link in NetworkManager mkfs.ext4 mkfs.vfat blkid; do
+	ln -sf "/usr/bin/$_sbin_link" "$RAMROOT/usr/sbin/$_sbin_link" 2>/dev/null || true
+done
+[ -f /usr/bin/wpa_cli ] && copy_opt wpa_cli /usr/bin/wpa_cli
+[ -f /usr/bin/rfkill ] && copy_opt rfkill /usr/bin/rfkill
+[ -f /usr/bin/iw ] && copy_opt iw /usr/bin/iw
+[ -f /usr/sbin/rfkill ] && { copy_opt rfkill /usr/sbin/rfkill; ln -sf /usr/bin/rfkill "$RAMROOT/usr/sbin/rfkill" 2>/dev/null || true; }
+[ -f /usr/sbin/iw ] && { copy_opt iw /usr/sbin/iw; ln -sf /usr/bin/iw "$RAMROOT/usr/sbin/iw" 2>/dev/null || true; }
+for _dbus_helper in /usr/lib/dbus-daemon-launch-helper /usr/libexec/dbus-daemon-launch-helper /usr/libexec/dbus-1/dbus-daemon-launch-helper; do
 	[ -f "$_dbus_helper" ] || continue
 	_helper_rel="${_dbus_helper#/}"
 	mkdir -p "$RAMROOT/$(dirname "$_helper_rel")"
@@ -438,7 +483,7 @@ for _dbus_helper in /usr/lib/dbus-daemon-launch-helper /usr/libexec/dbus-daemon-
 		echo "  ! cannot copy $_dbus_helper (build as root so live wifi works)"
 	fi
 done
-if [ ! -e "$RAMROOT/usr/lib/dbus-daemon-launch-helper" ] && [ ! -e "$RAMROOT/usr/libexec/dbus-daemon-launch-helper" ]; then
+if [ ! -e "$RAMROOT/usr/lib/dbus-daemon-launch-helper" ] && [ ! -e "$RAMROOT/usr/libexec/dbus-daemon-launch-helper" ] && [ ! -e "$RAMROOT/usr/libexec/dbus-1/dbus-daemon-launch-helper" ]; then
 	echo "  ! no dbus-daemon-launch-helper copied wifi activation may fail"
 fi
 
@@ -460,9 +505,10 @@ while IFS= read -r _nm_plugin; do
 	copy_libs "$_nm_plugin"
 done < <(find "$RAMROOT/usr/lib/NetworkManager" -name '*.so' 2>/dev/null)
 
-mkdir -p "$RAMROOT/var/lib/dbus"
-printf 'deadbeef000000000000000000000001\n' > "$RAMROOT/etc/machine-id"
-cp "$RAMROOT/etc/machine-id" "$RAMROOT/var/lib/dbus/machine-id"
+mkdir -p "$RAMROOT/var/lib/dbus" "$RAMROOT/etc"
+# No static machine-id on purpose: live init runs `dbus-uuidgen --ensure`
+# on every boot so each machine gets a unique ID (clones break D-Bus/DHCP).
+rm -f "$RAMROOT/etc/machine-id" "$RAMROOT/var/lib/dbus/machine-id" 2>/dev/null || true
 
 mkdir -p "$RAMROOT/usr/share/dbus-1/system.d"
 if [ -f /usr/share/dbus-1/system.d/org.freedesktop.NetworkManager.conf ]; then
@@ -517,19 +563,36 @@ for _ti in "l/linux" "x/xterm" "x/xterm-256color" "v/vt100" "s/screen"; do
 	[ -f "/usr/share/terminfo/$_ti" ] && cp "/usr/share/terminfo/$_ti" "$RAMROOT/usr/share/terminfo/$_ti" 2>/dev/null || echo "  ! terminfo $_ti missing"
 done
 
-printf '/lib64\n/usr/lib64\n' > "$RAMROOT/etc/ld.so.conf"
-ldconfig -r "$RAMROOT" 2>/dev/null || echo "  ! ldconfig failed (dynamic apps may not load)"
+printf '/lib64\n/usr/lib64\n/usr/lib\n/lib\n' > "$RAMROOT/etc/ld.so.conf" || { echo "  ERROR cannot write ld.so.conf"; exit 1; }
+# NSS is dlopen()ed by libc (never appears in ldd) - without it live DNS is dead.
+for _nss in /usr/lib/libnss_dns.so.2 /usr/lib/libnss_files.so.2; do
+	[ -e "$_nss" ] || continue
+	cp --dereference "$_nss" "$RAMROOT/usr/lib64/" 2>/dev/null || echo "  ! cannot copy $_nss (live DNS may fail)"
+done
+# Empty resolv.conf placeholder; NetworkManager populates it via DHCP.
+touch "$RAMROOT/etc/resolv.conf" 2>/dev/null || true
+if ! ldconfig -r "$RAMROOT" 2>/dev/null; then
+	echo "  ERROR ldconfig failed (dynamic apps will not load)"
+	exit 1
+fi
+[ -f "$RAMROOT/etc/ld.so.cache" ] || { echo "  ERROR ldconfig produced no cache"; exit 1; }
 
-mkdir -p "$RAMROOT/installer"
-cp installer/main.sh "$RAMROOT/installer/main.sh"
+mkdir -p "$RAMROOT/installer/lib" || { echo "  ERROR cannot create installer dir"; exit 1; }
+cp installer/main.sh "$RAMROOT/installer/main.sh" || { echo "  ERROR cannot copy installer"; exit 1; }
+cp -a installer/lib/. "$RAMROOT/installer/lib/" || { echo "  ERROR cannot copy installer libs"; exit 1; }
 chmod 0755 "$RAMROOT/installer/main.sh"
 
 if [ -f scripts/wifi-check.sh ]; then
-	cp scripts/wifi-check.sh "$RAMROOT/usr/bin/silen-wifi-check"
+	cp scripts/wifi-check.sh "$RAMROOT/usr/bin/silen-wifi-check" || { echo "  ERROR cannot copy wifi-check"; exit 1; }
 	chmod 0755 "$RAMROOT/usr/bin/silen-wifi-check"
 fi
 
-cp "$INIT_SOURCE" "$RAMROOT/init"
+if [ -f scripts/gpu-check.sh ]; then
+	cp scripts/gpu-check.sh "$RAMROOT/usr/bin/silen-gpu-check" || { echo "  ERROR cannot copy gpu-check"; exit 1; }
+	chmod 0755 "$RAMROOT/usr/bin/silen-gpu-check"
+fi
+
+cp "$INIT_SOURCE" "$RAMROOT/init" || { echo "  ERROR cannot copy init"; exit 1; }
 chmod 0755 "$RAMROOT/init"
 
 echo "  $(du -sh "$RAMROOT/bin" | cut -f1) busybox + applets"
@@ -551,31 +614,31 @@ copy_firmware() {
 			found=1
 			local rel="${f#$src/}"
 			if [ -d "$f" ]; then
-				[ -d "$RAMROOT/lib/firmware/$rel" ] || {
-					mkdir -p "$RAMROOT/lib/firmware/$(dirname "$rel")"
-					cp -a "$f" "$RAMROOT/lib/firmware/$rel"
-				}
+				# Merge per-file so the second source fills gaps instead of
+				# being skipped when the first source already made the dir.
+				mkdir -p "$RAMROOT/lib/firmware/$rel" || { echo "  ERROR cannot create firmware dir $rel"; exit 1; }
+				cp -an "$f"/. "$RAMROOT/lib/firmware/$rel"/ 2>/dev/null || cp -a "$f"/. "$RAMROOT/lib/firmware/$rel"/ || { echo "  ERROR cannot copy firmware dir $rel"; exit 1; }
 			else
 				local target="$RAMROOT/lib/firmware/$rel"
-				mkdir -p "$(dirname "$target")"
-				[ -f "$target" ] || cp "$f" "$target"
+				mkdir -p "$(dirname "$target")" || { echo "  ERROR cannot create firmware dir"; exit 1; }
+				[ -f "$target" ] || cp "$f" "$target" || { echo "  ERROR cannot copy firmware $rel"; exit 1; }
 			fi
 		done
 		if [ "$found" = 0 ]; then
-			set -- "$src/$fw.zst"
+			set -- "$src"/$fw.zst
 			for f in "$@"; do
 				[ -e "$f" ] || continue
 				found=1
 				local rel="${f#$src/}"
 				local target="$RAMROOT/lib/firmware/$rel"
-				mkdir -p "$(dirname "$target")"
-				[ -f "$target" ] || cp "$f" "$target"
+				mkdir -p "$(dirname "$target")" || { echo "  ERROR cannot create firmware dir"; exit 1; }
+				[ -f "$target" ] || cp "$f" "$target" || { echo "  ERROR cannot copy firmware $rel"; exit 1; }
 			done
 		fi
 		if [ "$found" = 0 ] && [ -f "$src/$fw.zst" ]; then
 			local target="$RAMROOT/lib/firmware/$fw.zst"
-			mkdir -p "$(dirname "$target")"
-			[ -f "$target" ] || cp "$src/$fw.zst" "$target"
+			mkdir -p "$(dirname "$target")" || { echo "  ERROR cannot create firmware dir"; exit 1; }
+			[ -f "$target" ] || cp "$src/$fw.zst" "$target" || { echo "  ERROR cannot copy firmware $fw.zst"; exit 1; }
 		fi
 	done
 }
@@ -589,19 +652,30 @@ in_chosen() {
 }
 
 for name in "${chosen[@]}"; do
-	path="$(module_file "$name")"
+	path="$(module_file "$name" || true)"
 	[ -z "$path" ] && continue
 
 	relative="${path#$MODULES_SOURCE/}"
-	mkdir -p "$MODULES_DIR/$(dirname "$relative")"
-	cp "$path" "$MODULES_DIR/$relative"
+	mkdir -p "$MODULES_DIR/$(dirname "$relative")" || { echo "  ERROR cannot create $MODULES_DIR/$(dirname "$relative")"; exit 1; }
+	cp "$path" "$MODULES_DIR/$relative" || { echo "  ERROR cannot copy module $name (disk full?)"; exit 1; }
 	if [ "${relative##*.}" = "zst" ]; then
-		zstd -d -f -q "$MODULES_DIR/$relative"
+		zstd -d -f -q "$MODULES_DIR/$relative" || { echo "  ERROR cannot decompress module $name"; exit 1; }
 		rm "$MODULES_DIR/$relative"
 	fi
 
-	for firmware in $(modinfo -F firmware "$path" 2>/dev/null); do
+	for firmware in $(modinfo -F firmware "$path" 2>/dev/null || true); do
 		[ -n "$firmware" ] || continue
+		# SIZE — never auto-copy `nvidia/*` blobs into the initramfs.
+		# Safety net for FULL=1 / AUTO_HOST=1 builds (the normal ALLOW
+		# lists contain no driver needing them): linux-firmware stores one
+		# ~50M GSP blob hardlinked across ~25 generation dirs and per-file
+		# cp materializes every link — 206M on the host becomes ~1.3G in
+		# the image and the ISO stops booting. Nouveau needs none of them
+		# for basic display; the proprietary stack ships its own firmware
+		# via spk on online installs.
+		case "$firmware" in
+			nvidia/*) continue ;;
+		esac
 		copy_firmware "$firmware"
 	done
 done
@@ -678,10 +752,14 @@ fi
 
 if [ -d "$FIRMWARE_SOURCE" ]; then
 	echo "  copying ALL wifi firmware from rootfs to initramfs for live ISO"
-	mkdir -p "$RAMROOT/lib/firmware"
-	cp -a "$FIRMWARE_SOURCE"/. "$RAMROOT/lib/firmware/" 2>/dev/null || true
+	mkdir -p "$RAMROOT/lib/firmware" || { echo "  ERROR cannot create firmware dir"; exit 1; }
+	cp -a "$FIRMWARE_SOURCE"/. "$RAMROOT/lib/firmware/" || { echo "  ERROR cannot copy firmware (disk full?)"; exit 1; }
 fi
 
+# NOTE: no GPU firmware in the live initramfs on purpose — it carries no
+# GPU modules (see VIDEO note above), so graphics blobs here would only
+# bloat the image. The target gets them from the ISO /firmware dir via
+# install-modules (online installs additionally try an spk refresh).
 cp "$MODULES_SOURCE/modules.builtin" "$MODULES_DIR/modules.builtin" 2>/dev/null || true
 cp "$MODULES_SOURCE/modules.builtin.modinfo" "$MODULES_DIR/modules.builtin.modinfo" 2>/dev/null || true
 cp "$MODULES_SOURCE/modules.order" "$MODULES_DIR/modules.order" 2>/dev/null || true
@@ -698,12 +776,24 @@ find "$MODULES_DIR" -name '*.ko' -exec strip --strip-debug {} + 2>/dev/null || t
 echo "  modules after strip $(du -sh "$MODULES_DIR" | cut -f1)"
 
 echo "  writing /etc modules"
-printf '%s\n' "${chosen[@]}" | sort > "$RAMROOT/etc/modules"
+if [ "${#chosen[@]}" -gt 0 ]; then
+	printf '%s\n' "${chosen[@]}" | sort > "$RAMROOT/etc/modules"
+else
+	echo "  ! WARNING no modules selected (ALLOW list matched nothing)"
+	: > "$RAMROOT/etc/modules"
+fi
 
 mkdir -p "$RAMROOT/etc/modprobe.d"
 printf 'options rtw88_pci disable_aspm=Y\noptions rtw88_core disable_lps_deep=Y\n' > "$RAMROOT/etc/modprobe.d/silen-rtw88.conf"
 
 echo "  generating modules dep"
+
+# usrmerge compat (openSUSE/SUSE): host depmod looks in $RAMROOT/usr/lib/modules
+# while this script populates $RAMROOT/lib/modules (Arch layout).
+mkdir -p "$RAMROOT/usr/lib"
+if [ ! -e "$RAMROOT/usr/lib/modules" ] && [ -d "$RAMROOT/lib/modules" ]; then
+	ln -sfn ../../lib/modules "$RAMROOT/usr/lib/modules"
+fi
 
 if [ -x /usr/bin/depmod ]; then
 	DEPMOD=/usr/bin/depmod
@@ -712,19 +802,23 @@ elif [ -x /sbin/depmod ]; then
 else
 	DEPMOD=depmod
 fi
-$DEPMOD -b "$RAMROOT" "$KERNEL_VERSION" || echo "  ! depmod failed modules dep may be missing"
+if ! "$DEPMOD" -b "$RAMROOT" "$KERNEL_VERSION"; then
+	echo "  ERROR depmod failed (modules will not load)"
+	exit 1
+fi
+[ -f "$MODULES_DIR/modules.dep" ] || [ -f "$MODULES_DIR/modules.dep.bin" ] || { echo "  ERROR depmod produced no modules.dep"; exit 1; }
 
 
 echo "[6/7] Packing initramfs ($COMPRESS)"
 
-AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)"
+AVAIL_MB="$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || true)"
 if [ -n "$AVAIL_MB" ] && [ "$AVAIL_MB" -gt 0 ] && [ "$AVAIL_MB" -lt "$MIN_RAM_MB" ] && [ "$FORCE" != "1" ]; then
 	echo "  ERROR only ${AVAIL_MB}MB RAM available need ${MIN_RAM_MB}MB at compression time"
 	echo "  Rerun with FORCE=1 to try anyway"
 	exit 1
 fi
 
-for cmd in cpio; do
+for cmd in cpio tar modinfo ldd depmod ldconfig du strip; do
 	if ! command -v "$cmd" >/dev/null 2>&1; then
 		echo "  ERROR $cmd not found install it e.g. sudo pacman -S $cmd"
 		exit 1
@@ -737,17 +831,21 @@ fi
 
 CPIO_FILE="build/initramfs.cpio"
 
-(
+if ! (
 	cd "$RAMROOT"
-	find . -print0 | cpio --null -o --format=newc --owner=0:0 2>/dev/null
-) > "$CPIO_FILE"
+	find . -print0 | cpio --null -o --format=newc --owner=0:0
+) > "$CPIO_FILE"; then
+	echo "  ERROR cpio failed (need cpio package, disk space)"
+	exit 1
+fi
+[ -s "$CPIO_FILE" ] || { echo "  ERROR cpio produced empty archive"; exit 1; }
 
 if [ "$COMPRESS" = "zstd" ]; then
-	zstd -19 -q -c "$CPIO_FILE" > "build/$INITRAMFS"
+	zstd -19 -q -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR zstd compression failed (need RAM/disk, try FORCE=1)"; exit 1; }
 elif [ "$COMPRESS" = "gzip" ]; then
-	gzip -9 -c "$CPIO_FILE" > "build/$INITRAMFS"
+	gzip -9 -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR gzip compression failed"; exit 1; }
 else
-	xz -9 -c "$CPIO_FILE" > "build/$INITRAMFS"
+	xz -9 -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR xz compression failed"; exit 1; }
 fi
 
 rm -f "$CPIO_FILE"
@@ -761,18 +859,22 @@ mkdir -p "$ISO_DIR/boot/grub"
 
 if modules_ok "$MODULES_SOURCE"; then
 	echo "  packing kernel + module tree for the installed system"
+	if ! command -v zstd >/dev/null 2>&1; then
+		echo "  ERROR zstd not found (needed for kernel/network bundles) install it e.g. sudo pacman -S zstd"
+		exit 1
+	fi
 	KROOT="build/kernel-root"
 	rm -rf "$KROOT"
 	mkdir -p "$KROOT/boot" "$KROOT/lib/modules"
-	cp "$KERNEL_SOURCE" "$KROOT/boot/vmlinuz"
-	cp -a "$MODULES_SOURCE" "$KROOT/lib/modules/$KERNEL_VERSION"
+	cp "$KERNEL_SOURCE" "$KROOT/boot/vmlinuz" || { echo "  ERROR cannot copy kernel image"; exit 1; }
+	cp -a "$MODULES_SOURCE" "$KROOT/lib/modules/$KERNEL_VERSION" || { echo "  ERROR cannot copy module tree"; exit 1; }
 	rm -rf "$KROOT/lib/modules/$KERNEL_VERSION/build" \
 	       "$KROOT/lib/modules/$KERNEL_VERSION/source" \
 	       "$KROOT/lib/modules/$KERNEL_VERSION/vmlinuz"
 	find "$KROOT/lib/modules" \( -name '*.ko' -o -name '*.ko.zst' -o -name '*.ko.xz' \) -exec strip --strip-debug {} + 2>/dev/null || true
 	KERNEL_TAR="$ISO_DIR/kernel-$KERNEL_VERSION.tar.zst"
 	tar -C "$KROOT" --exclude='./lib/modules/*/build' --exclude='./lib/modules/*/source' \
-		--exclude='./lib/modules/*/vmlinuz' -I 'zstd -19' -cf "$KERNEL_TAR" .
+		--exclude='./lib/modules/*/vmlinuz' -I 'zstd -19' -cf "$KERNEL_TAR" . || { echo "  ERROR kernel tarball creation failed (disk full?)"; exit 1; }
 	echo "  kernel bundle: $(du -h "$KERNEL_TAR" | cut -f1)"
 else
 	echo "  no module tree found to add to ISO installed system gets the initramfs set"
@@ -780,7 +882,29 @@ fi
 
 if [ -d rootfs/lib/firmware ]; then
 	echo "  adding firmware to ISO at firmware"
-	cp -a rootfs/lib/firmware "$ISO_DIR/firmware"
+	cp -a rootfs/lib/firmware "$ISO_DIR/firmware" || { echo "  ERROR cannot copy firmware to ISO"; exit 1; }
+	# BLACK-SCREEN FIX — graphics blobs for the installed target. Offline
+	# installs copy /mnt/firmware into the target via install-modules, and
+	# the repo tree only carries Wi-Fi blobs, so without this merge KMS
+	# (amdgpu/i915/...) refuses to modeset after reboot -> black screen.
+	# The live initramfs itself needs none of this (builtin simpledrm).
+	# SIZE — no `nvidia` here (~200M, proprietary-driver only).
+	# Merge per-file (cp -an) so the host fills gaps when the repo tree
+	# already has a partial dir.
+	_iso_gpu_found=""
+	for _gpu_fw in amdgpu amd-ucode intel-ucode i915 xe nouveau radeon; do
+		for _fwsrc in rootfs/lib/firmware "$HOST_FIRMWARE"; do
+			[ -n "$_fwsrc" ] && [ -d "$_fwsrc/$_gpu_fw" ] || continue
+			mkdir -p "$ISO_DIR/firmware/$_gpu_fw" || { echo "  ERROR cannot create ISO firmware dir $_gpu_fw"; exit 1; }
+			cp -an "$_fwsrc/$_gpu_fw"/. "$ISO_DIR/firmware/$_gpu_fw"/ 2>/dev/null || \
+			cp -a "$_fwsrc/$_gpu_fw"/. "$ISO_DIR/firmware/$_gpu_fw"/ || { echo "  ERROR cannot copy GPU firmware $_gpu_fw to ISO"; exit 1; }
+			case "$_gpu_fw" in amdgpu|i915|xe|radeon|nouveau) _iso_gpu_found="$_iso_gpu_found $_gpu_fw" ;; esac
+		done
+	done
+	if [ -z "$_iso_gpu_found" ]; then
+		echo "  ! WARNING ISO carries no GPU firmware — offline installs will black-screen on KMS."
+		echo "  !   Install linux-firmware on the build host and rebuild."
+	fi
 fi
 
 STAGE3_TARBALL=""
@@ -791,7 +915,7 @@ for _st in stage3-*.tar.* tarball-*.xz tarball-*.tar.*; do
 done
 if [ -n "$STAGE3_TARBALL" ]; then
 	echo "  copying stage3 tarball onto the ISO $STAGE3_TARBALL"
-	cp "$STAGE3_TARBALL" "$ISO_DIR/"
+	cp "$STAGE3_TARBALL" "$ISO_DIR/" || { echo "  ERROR cannot copy $STAGE3_TARBALL to ISO (disk full?)"; exit 1; }
 else
 	echo
 	echo "  !! WARNING no stage3/tarball found in the repo root"
@@ -804,12 +928,57 @@ fi
 if command -v cargo >/dev/null 2>&1; then
 	echo "  building spk spk/src/get.rs"
 	CARGO_ENV=()
-	if [ -n "$SUDO_USER" ]; then
-		CARGO_ENV+=(RUSTUP_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)/.rustup CARGO_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)/.cargo)
+	CARGO_AS_USER=""
+	if [ -n "${SUDO_USER:-}" ]; then
+		_SUDO_HOME="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+		if [ -n "$_SUDO_HOME" ]; then
+			CARGO_ENV+=(RUSTUP_HOME="$_SUDO_HOME/.rustup" CARGO_HOME="$_SUDO_HOME/.cargo")
+			if [ "$(id -u)" = "0" ] && command -v sudo >/dev/null 2>&1; then
+				CARGO_AS_USER="$SUDO_USER"
+			fi
+		fi
 	fi
-	if env "${CARGO_ENV[@]}" cargo build --release --manifest-path spk/Cargo.toml; then
-		echo "  copying spk onto the ISO"
-		cp spk/target/release/spk "$ISO_DIR/spk"
+	_CARGO_OK=0
+	if [ -n "$CARGO_AS_USER" ]; then
+		# Build as the invoking user so root never poisons ~/.cargo.
+		if sudo -u "$CARGO_AS_USER" env "${CARGO_ENV[@]}" cargo build --release --manifest-path spk/Cargo.toml; then
+			_CARGO_OK=1
+		fi
+	else
+		if env "${CARGO_ENV[@]}" cargo build --release --manifest-path spk/Cargo.toml; then
+			_CARGO_OK=1
+		fi
+	fi
+	if [ "$_CARGO_OK" = "1" ]; then
+		echo "  copying spk onto the ISO and into the live initramfs"
+		cp spk/target/release/spk "$ISO_DIR/spk" || echo "  ! cannot copy spk to ISO installer will fetch it another way"
+		if [ -f spk/target/release/spk ]; then
+			mkdir -p "$RAMROOT/usr/bin" || { echo "  ERROR cannot create usr/bin"; exit 1; }
+			cp spk/target/release/spk "$RAMROOT/usr/bin/spk" || echo "  ! cannot copy spk to initramfs (live spk will rely on /mnt/spk)"
+			chmod 0755 "$RAMROOT/usr/bin/spk" 2>/dev/null || true
+		fi
+		# cargo runs after [6/7] packed the initramfs, so re-pack to include
+		# /usr/bin/spk in the live env (the later ISO copy picks this up).
+		if [ -f "$RAMROOT/usr/bin/spk" ] && [ -f "build/$INITRAMFS" ]; then
+			echo "  re-packing initramfs to include spk"
+			copy_libs "$RAMROOT/usr/bin/spk"
+			if ! (
+				cd "$RAMROOT"
+				find . -print0 | cpio --null -o --format=newc --owner=0:0
+			) > "$CPIO_FILE"; then
+				echo "  ERROR cpio re-pack failed"
+				exit 1
+			fi
+			if [ "$COMPRESS" = "zstd" ]; then
+				zstd -19 -q -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR zstd re-pack failed"; exit 1; }
+			elif [ "$COMPRESS" = "gzip" ]; then
+				gzip -9 -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR gzip re-pack failed"; exit 1; }
+			else
+				xz -9 -c "$CPIO_FILE" > "build/$INITRAMFS" || { echo "  ERROR xz re-pack failed"; exit 1; }
+			fi
+			rm -f "$CPIO_FILE"
+			echo "  initramfs: $(du -h "build/$INITRAMFS" | cut -f1)"
+		fi
 	else
 		echo "  ! spk build failed installer will try to fetch it another way"
 	fi
@@ -840,12 +1009,12 @@ for _np in \
 	etc/machine-id \
 ; do
 	[ -e "$RAMROOT/$_np" ] || [ -L "$RAMROOT/$_np" ] || continue
-	mkdir -p "$NETROOT/$(dirname "$_np")"
-	cp -a "$RAMROOT/$_np" "$NETROOT/$_np"
+	mkdir -p "$NETROOT/$(dirname "$_np")" || { echo "  ERROR cannot create $NETROOT/$(dirname "$_np")"; exit 1; }
+	cp -a "$RAMROOT/$_np" "$NETROOT/$_np" || { echo "  ERROR cannot copy $_np to network bundle"; exit 1; }
 done
 if [ -d "$NETROOT/usr/bin" ]; then
 	NETWORK_TAR="$ISO_DIR/network.tar.zst"
-	tar -C "$NETROOT" -I 'zstd -19' -cf "$NETWORK_TAR" .
+	tar -C "$NETROOT" -I 'zstd -19' -cf "$NETWORK_TAR" . || { echo "  ERROR network bundle creation failed"; exit 1; }
 	echo "  network bundle $(du -h "$NETWORK_TAR" | cut -f1)"
 else
 	echo "  ! network stack missing from ramroot installed system gets no NetworkManager"
@@ -854,7 +1023,7 @@ fi
 if [ -d grub-bundle/usr/local ]; then
 	echo "  adding bundled grub EFI to ISO at grub"
 	mkdir -p "$ISO_DIR/grub"
-	cp -a grub-bundle/usr "$ISO_DIR/grub/"
+	cp -a grub-bundle/usr "$ISO_DIR/grub/" || { echo "  ERROR cannot copy grub-bundle"; exit 1; }
 else
 	echo "  ! no grub-bundle/ found - installer won't be able to set up GRUB"
 	echo "    build it once with scripts/make-grub-bundle.sh"
@@ -863,16 +1032,16 @@ fi
 if [ -f branding/fastfetch_logo.txt ]; then
 	echo "  adding branding to ISO at branding"
 	mkdir -p "$ISO_DIR/branding"
-	cp branding/fastfetch_logo.txt "$ISO_DIR/branding/"
-	[ -f branding/info.txt ] && cp branding/info.txt "$ISO_DIR/branding/"
+	cp branding/fastfetch_logo.txt "$ISO_DIR/branding/" || { echo "  ERROR cannot copy branding"; exit 1; }
+	[ -f branding/info.txt ] && cp branding/info.txt "$ISO_DIR/branding/" || true
 fi
 
-cp "$KERNEL_SOURCE" "$ISO_DIR/boot/vmlinuz"
-cp "build/$INITRAMFS" "$ISO_DIR/boot/$INITRAMFS"
+cp "$KERNEL_SOURCE" "$ISO_DIR/boot/vmlinuz" || { echo "  ERROR cannot copy kernel to ISO"; exit 1; }
+cp "build/$INITRAMFS" "$ISO_DIR/boot/$INITRAMFS" || { echo "  ERROR cannot copy initramfs to ISO"; exit 1; }
 
 cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
 set default=0
-set timeout=5
+set timeout=10
 
 insmod part_gpt
 insmod part_msdos
@@ -886,12 +1055,33 @@ insmod efi_uga
 if loadfont \$prefix/fonts/unicode.pf2; then
 	set gfxmode=auto
 fi
-terminal_output gfxterm
+# RELIABLE-VIDEO 2026-09-21 — keep KMS on by default (never nomodeset:
+# that kills accel/resolution/Wayland and betrays "reliable by default").
+# fbcon=nodefer guarantees the console binds even with deferred probes
+# (classic AMD black-screen); gfxpayload=keep hands the GOP framebuffer to
+# the kernel so there is never a dead gap between GRUB and KMS. The
+# nomodeset entry below is SAFE MODE only — rootfs/init skips every
+# DRM/GPU module when it sees it. NOTE: 'set gfxpayload=text' is invalid
+# on UEFI ('invalid video mode specification', blind mode, LP#1711452) —
+# 'keep' is the correct value.
 set gfxpayload=keep
+terminal_output gfxterm console
 
 menuentry "Silen Linux" {
 	echo "Booting Silen"
-	linux /boot/vmlinuz quiet loglevel=3
+	linux /boot/vmlinuz loglevel=4 console=tty0 fbcon=nodefer
+	initrd /boot/$INITRAMFS
+}
+
+menuentry "Silen Linux (fallback, safe graphics)" {
+	echo "Booting Silen (safe graphics, no KMS)"
+	linux /boot/vmlinuz nomodeset loglevel=4 console=tty0 fbcon=nodefer
+	initrd /boot/$INITRAMFS
+}
+
+menuentry "Silen Linux (verbose, debug video)" {
+	echo "Booting Silen (verbose)"
+	linux /boot/vmlinuz loglevel=7 console=tty0 fbcon=nodefer drm.debug=0x1e
 	initrd /boot/$INITRAMFS
 }
 EOF
@@ -909,5 +1099,10 @@ echo "modules    $(du -sh "$MODULES_DIR" | cut -f1)"
 echo "firmware   $(du -sh "$RAMROOT/lib/firmware" 2>/dev/null | cut -f1)"
 
 if [ -n "${SUDO_USER:-}" ]; then
-	chown -R "$SUDO_USER" build 2>/dev/null || true
+	_SUDO_GRP="$(id -gn "$SUDO_USER" 2>/dev/null || true)"
+	if [ -n "$_SUDO_GRP" ]; then
+		chown -R "$SUDO_USER:$_SUDO_GRP" build 2>/dev/null || chown -R "$SUDO_USER" build 2>/dev/null || true
+	else
+		chown -R "$SUDO_USER" build 2>/dev/null || true
+	fi
 fi

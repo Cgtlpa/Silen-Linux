@@ -33,6 +33,9 @@ Silen is developed with a simple goal, create a distribution that works reliably
 
 ---
 
+## Contributing
+
+Contributions, bug reports, report them in the discord server : https://discord.gg/WxbRRURcZ
 
 ---
 

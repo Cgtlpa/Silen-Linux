@@ -12,17 +12,61 @@ mount -t tmpfs tmpfs /tmp 2>/dev/null
 mount -t tmpfs tmpfs /run 2>/dev/null
 
 QUIET=""
-for _q in $(cat /proc/cmdline 2>/dev/null); do
-	[ "$_q" = "quiet" ] && QUIET=1 && break
+NOMODESET=""
+MOD_BLACKLIST=" "
+CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+for _q in $CMDLINE; do
+	[ "$_q" = "quiet" ] && QUIET=1
+	[ "$_q" = "nomodeset" ] && NOMODESET=1
+	case "$_q" in
+		modprobe.blacklist=*|rd.driver.blacklist=*)
+			_bl="${_q#*=}"
+			_bl="$(printf '%s' "$_bl" | tr ',' ' ')"
+			MOD_BLACKLIST="$MOD_BLACKLIST $_bl "
+			;;
+	esac
 done
 qecho() { [ -n "$QUIET" ] || echo "$@"; }
+# DRM/GPU modules that must be skipped when safe-graphics is requested.
+# `nomodeset` means "do not do KMS at all" — loading amdgpu/i915/xe/
+# radeon/nouveau anyway would modeset despite the flag and can still
+# black-screen, defeating the fallback entry. A per-module blacklist
+# (used for `modprobe.blacklist=nouveau` on proprietary-NVIDIA targets)
+# is honoured for every module, not just video.
+is_video_mod() {
+	case "$1" in
+		amdgpu|radeon|i915|xe|nouveau|virtio-gpu|virtio_gpu|qxl|vmwgfx|ast|mgag200|bochs|cirrus-qemu|cirrus_qemu|cirrus|drm|drm_kms_helper|simpledrm|drm_sysfb_helper|sysfb|video) return 0 ;;
+	esac
+	return 1
+}
+is_blacklisted_mod() {
+	case "$MOD_BLACKLIST" in
+		*" $1 "*) return 0 ;;
+	esac
+	_alt="$(printf '%s' "$1" | tr '_' '-')"
+	[ "$_alt" != "$1" ] && case "$MOD_BLACKLIST" in *" $_alt "*) return 0 ;; esac
+	_alt="$(printf '%s' "$1" | tr '-' '_')"
+	[ "$_alt" != "$1" ] && case "$MOD_BLACKLIST" in *" $_alt "*) return 0 ;; esac
+	return 1
+}
 
 if [ -f /etc/modules ]; then
 	qecho "Loading kernel modules"
 	while read -r mod; do
 		case "$mod" in ""|\#*|options\ *) continue ;; esac
+		if [ -n "$NOMODESET" ] && is_video_mod "$mod"; then
+			qecho "  skipping $mod (nomodeset safe graphics)"
+			continue
+		fi
+		if is_blacklisted_mod "$mod"; then
+			qecho "  skipping $mod (blacklisted on cmdline)"
+			continue
+		fi
 		modprobe -q "$mod" 2>/dev/null || true
 	done < /etc/modules
+fi
+if [ -n "$NOMODESET" ]; then
+	qecho "Safe graphics mode: KMS drivers skipped, using firmware framebuffer"
 fi
 
 rootarg=""
@@ -57,7 +101,7 @@ if [ -n "$rootarg" ]; then
 			mount --move /sys /newroot/sys 2>/dev/null || mount -t sysfs sysfs /newroot/sys 2>/dev/null || true
 			mount --move /dev /newroot/dev 2>/dev/null || mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null || true
 			mount --move /run /newroot/run 2>/dev/null || mount -t tmpfs tmpfs /newroot/run 2>/dev/null || true
-			qecho "Silen switching to $newroot/sbin/init"
+			qecho "Silen switching to /newroot/sbin/init"
 			if [ -n "$QUIET" ]; then
 				clear >/dev/console 2>&1 || printf '\033[H\033[2J' >/dev/console 2>&1 || true
 			fi
@@ -89,7 +133,7 @@ fi
 
 if command -v dbus-daemon >/dev/null 2>&1; then
 	echo "Starting D-Bus"
-	[ -f /etc/machine-id ] || dbus-uuidgen --ensure 2>/dev/null || true
+	[ -s /etc/machine-id ] || dbus-uuidgen --ensure 2>/dev/null || true
 	dbus-daemon --system --nofork >/dev/null 2>&1 &
 	sleep 1
 else
